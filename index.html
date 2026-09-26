@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#8B7CF6" />
+  <meta name="description" content="ezScan — pemindai dokumen & OCR multi-halaman yang berjalan 100% di browser. Crop, binarisasi, PDF searchable." />
+  <title>ezScan · Document Scanner &amp; OCR</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%238B7CF6'/%3E%3Cpath d='M14 24V16h8M50 24V16h-8M14 40v8h8M50 40v8h-8' stroke='white' stroke-width='5' stroke-linecap='round' fill='none'/%3E%3Cpath d='M22 32h20' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E" />
+
+  <!-- Tailwind CSS (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            cream: '#FAF7F2',
+            ink:   '#37324A',
+            lav:   '#DDD3F5',
+            brand: {
+              50:'#F4F1FE',100:'#EAE4FD',200:'#D6CBFA',300:'#BEACF6',400:'#A28BF0',
+              500:'#8B7CF6',600:'#7263DF',700:'#5D4FC2',800:'#4A3F9C',900:'#3B337B'
+            },
+          },
+          fontFamily: { sans: ['"Plus Jakarta Sans"','ui-sans-serif','system-ui','sans-serif'] },
+          boxShadow: {
+            card: '0 2px 14px -6px rgba(55,50,74,.14)',
+            soft: '0 14px 40px -18px rgba(114,99,223,.45)',
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- Fonts & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+
+  <!-- Cropper.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css" />
+
+  <!-- Custom styles -->
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <style type="text/tailwindcss">
+    .card         { @apply rounded-2xl border border-brand-100 bg-white/85 shadow-card backdrop-blur; }
+    .section-title{ @apply flex items-center gap-2.5 text-base font-extrabold text-ink; }
+    .btn          { @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all duration-150 active:scale-[.97] disabled:pointer-events-none disabled:opacity-40; }
+    .btn-primary  { @apply btn bg-gradient-to-br from-brand-500 to-brand-400 text-white shadow-soft hover:from-brand-600 hover:to-brand-500; }
+    .btn-ghost    { @apply btn border border-brand-200 bg-white text-brand-700 hover:bg-brand-50; }
+    .btn-soft     { @apply btn bg-brand-50 text-brand-700 hover:bg-brand-100; }
+    .btn-danger   { @apply btn bg-red-50 text-red-500 hover:bg-red-100; }
+    .chip         { @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold; }
+  </style>
+</head>
+
+<body class="min-h-screen bg-cream font-sans text-ink antialiased">
+  <div class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+    <div class="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-brand-200/40 blur-3xl"></div>
+    <div class="absolute top-1/3 -right-32 h-96 w-96 rounded-full bg-lav/50 blur-3xl"></div>
+    <div class="absolute bottom-0 left-1/4 h-72 w-72 rounded-full bg-brand-100/60 blur-3xl"></div>
+  </div>
+
+  <!-- ======================= HEADER + STEPPER ======================= -->
+  <header class="sticky top-0 z-40 border-b border-brand-100/80 bg-cream/85 backdrop-blur-md">
+    <div class="mx-auto flex max-w-5xl items-center gap-3 px-4 pt-3">
+      <div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-300 shadow-soft">
+        <i class="fa-solid fa-expand text-white"></i>
+      </div>
+      <div class="min-w-0">
+        <h1 class="text-lg font-extrabold leading-none tracking-tight">ezScan</h1>
+        <p class="mt-0.5 text-[11px] font-medium text-ink/50">Document Scanner &amp; OCR — 100% di browser</p>
+      </div>
+      <span class="chip ml-auto hidden bg-emerald-100/80 text-emerald-600 sm:inline-flex" title="Gambar tidak pernah meninggalkan perangkatmu">
+        <i class="fa-solid fa-shield-halved"></i> Privat · Offline AI
+      </span>
+    </div>
+
+    <nav id="stepper" class="mx-auto flex max-w-5xl items-center gap-1 px-5 pb-2.5 pt-2" aria-label="Langkah proses">
+      <div class="step" data-step="1"><span class="step-dot"><i class="fa-solid fa-camera"></i></span><span class="step-label">Ambil</span></div>
+      <div class="step-line"></div>
+      <div class="step" data-step="2"><span class="step-dot"><i class="fa-solid fa-crop-simple"></i></span><span class="step-label">Crop &amp; Filter</span></div>
+      <div class="step-line"></div>
+      <div class="step" data-step="3"><span class="step-dot"><i class="fa-solid fa-wand-magic-sparkles"></i></span><span class="step-label">OCR</span></div>
+      <div class="step-line"></div>
+      <div class="step" data-step="4"><span class="step-dot"><i class="fa-solid fa-file-pdf"></i></span><span class="step-label">Hasil</span></div>
+    </nav>
+  </header>
+
+  <main class="mx-auto w-full max-w-5xl px-4 pb-16 pt-5">
+
+    <!-- ======================= SCREEN 1: CAPTURE ======================= -->
+    <section id="screen-capture" class="screen">
+      <div class="grid gap-5 md:grid-cols-5">
+
+        <!-- Kartu Kamera -->
+        <div class="card p-4 md:col-span-3 md:p-5">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="section-title"><span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600"><i class="fa-solid fa-camera"></i></span> Ambil Halaman</h2>
+            <span id="camStatus" class="chip bg-ink/5 text-ink/50"><i class="fa-regular fa-clock"></i> Idle</span>
+          </div>
+
+          <div id="cameraFrame" class="relative mt-3 h-[44vh] min-h-[300px] overflow-hidden rounded-2xl bg-ink/90 md:h-[52vh]">
+            <video id="video" autoplay playsinline muted class="h-full w-full object-cover"></video>
+
+            <!-- Panduan sudut dokumen -->
+            <div class="pointer-events-none absolute inset-6">
+              <div class="absolute left-0 top-0 h-8 w-8 rounded-tl-lg border-l-[3px] border-t-[3px] border-white/70"></div>
+              <div class="absolute right-0 top-0 h-8 w-8 rounded-tr-lg border-r-[3px] border-t-[3px] border-white/70"></div>
+              <div class="absolute bottom-0 left-0 h-8 w-8 rounded-bl-lg border-b-[3px] border-l-[3px] border-white/70"></div>
+              <div class="absolute bottom-0 right-0 h-8 w-8 rounded-br-lg border-b-[3px] border-r-[3px] border-white/70"></div>
+            </div>
+
+            <span id="fpsChip" class="absolute right-3 top-3 rounded-full bg-ink/60 px-2.5 py-1 text-[10px] font-bold text-white backdrop-blur">
+              <i class="fa-solid fa-bolt mr-1 text-brand-300"></i>20–25 FPS
+            </span>
+
+            <!-- Overlay: idle / error -->
+            <div id="cameraOverlay" class="absolute inset-0 grid place-items-center bg-ink/75 p-6 text-center backdrop-blur-sm">
+              <div>
+                <div class="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-white/10 text-2xl text-brand-200">
+                  <i class="fa-solid fa-camera-retro"></i>
+                </div>
+                <p id="cameraOverlayText" class="mx-auto mt-3 max-w-xs text-sm font-medium text-white/80">
+                  Aktifkan kamera untuk mulai memindai dokumen, atau unggah gambar dari galeri.
+                </p>
+                <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <button id="btnStartCamera" class="btn-primary"><i class="fa-solid fa-power-off"></i> Aktifkan Kamera</button>
+                  <label id="btnUploadAlt" for="fileInput" class="btn cursor-pointer border border-white/25 bg-white/10 text-white hover:bg-white/20">
+                    <i class="fa-solid fa-images"></i> Unggah Gambar
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Kontrol kamera -->
+          <div class="mt-4 flex items-center justify-between gap-3">
+            <label for="fileInput" class="btn-ghost cursor-pointer" title="Unggah dari galeri">
+              <i class="fa-solid fa-images"></i><span class="hidden sm:inline">Galeri</span>
+            </label>
+
+            <button id="btnShutter" class="shutter" disabled aria-label="Ambil Foto">
+              <span class="shutter-inner"><i class="fa-solid fa-camera"></i></span>
+            </button>
+
+            <button id="btnSwitchCam" class="btn-ghost" title="Ganti kamera" aria-label="Ganti kamera">
+              <i class="fa-solid fa-camera-rotate"></i><span class="hidden sm:inline">Ganti</span>
+            </button>
+          </div>
+          <p class="mt-3 text-center text-[11px] leading-relaxed text-ink/45">
+            Preview kamera dibatasi <strong>20–25 FPS</strong> untuk menghemat baterai &amp; RAM. Foto beresolusi tinggi otomatis di-downsample ke maks. 2000px.
+          </p>
+        </div>
+
+        <!-- Kartu Halaman -->
+        <div class="card flex flex-col p-4 md:col-span-2 md:p-5">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="section-title"><span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600"><i class="fa-solid fa-layer-group"></i></span> Halaman</h2>
+            <span id="pageCountChip" class="chip bg-brand-50 text-brand-600"><i class="fa-solid fa-files"></i> 0 Halaman</span>
+          </div>
+
+          <div id="thumbGrid" class="mt-4 grid grid-cols-3 gap-2"></div>
+
+          <div id="emptyHint" class="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-brand-200 px-4 py-10 text-center">
+            <i class="fa-regular fa-file-lines text-3xl text-brand-300"></i>
+            <p class="text-sm font-semibold text-ink/60">Belum ada halaman</p>
+            <p class="text-xs text-ink/40">Ambil foto atau unggah gambar untuk dokumen multi-halaman.</p>
+          </div>
+
+          <label for="fileInput" class="btn-soft mt-4 w-full cursor-pointer">
+            <i class="fa-solid fa-plus"></i> Tambah Halaman (Unggah)
+          </label>
+          <button id="btnToCrop" class="btn-primary mt-2 w-full" disabled>
+            Lanjut ke Crop &amp; Filter <i class="fa-solid fa-arrow-right"></i>
+          </button>
+          <p class="mt-3 flex items-start gap-1.5 text-[11px] leading-relaxed text-ink/45">
+            <i class="fa-solid fa-lock mt-0.5 text-brand-300"></i>
+            Semua pemrosesan (crop, binarisasi, OCR, PDF) berjalan lokal di perangkatmu — tidak ada data terkirim ke server.
+          </p>
+        </div>
+      </div>
+
+      <input type="file" id="fileInput" accept="image/*" multiple hidden />
+    </section>
+
+    <!-- ======================= SCREEN 2: CROP & FILTER ======================= -->
+    <section id="screen-crop" class="screen hidden">
+      <!-- Toolbar atas -->
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="btnBackCapture" class="btn-ghost"><i class="fa-solid fa-arrow-left"></i> Kembali</button>
+        <div class="ml-auto flex items-center gap-1.5">
+          <button id="btnPrevPage" class="btn-ghost !px-3" aria-label="Halaman sebelumnya"><i class="fa-solid fa-chevron-left"></i></button>
+          <span id="cropPageLabel" class="min-w-[110px] text-center text-sm font-extrabold text-brand-700">Halaman 1/1</span>
+          <button id="btnNextPage" class="btn-ghost !px-3" aria-label="Halaman berikutnya"><i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+      </div>
+
+      <div class="card mt-4 p-4 md:p-5">
+        <!-- Filter segmented + aksi crop -->
+        <div class="flex flex-wrap items-center gap-2">
+          <div id="filterSeg" class="flex rounded-xl bg-brand-50 p-1" role="tablist" aria-label="Mode filter">
+            <button data-filter="bw" class="seg-btn" role="tab"><i class="fa-solid fa-circle-half-stroke"></i> B&amp;W Tajam</button>
+            <button data-filter="enhanced" class="seg-btn" role="tab"><i class="fa-solid fa-wand-magic-sparkles"></i> Warna</button>
+            <button data-filter="original" class="seg-btn" role="tab"><i class="fa-regular fa-image"></i> Asli</button>
+          </div>
+          <div class="ml-auto flex gap-2">
+            <button id="btnResetCrop" class="btn-ghost"><i class="fa-solid fa-rotate-left"></i> <span class="hidden sm:inline">Reset</span></button>
+            <button id="btnApplyCrop" class="btn-soft"><i class="fa-solid fa-check"></i> Terapkan Crop</button>
+          </div>
+        </div>
+
+        <!-- Area Cropper -->
+        <div id="cropWrap" class="relative mt-3 h-[46vh] min-h-[300px] overflow-hidden rounded-2xl bg-brand-50/60 md:h-[56vh]">
+          <img id="cropImage" class="block max-w-full" src="" alt="Halaman yang diedit" />
+          <div id="cropSpinner" class="absolute inset-0 z-10 hidden place-items-center bg-white/70 backdrop-blur-sm">
+            <div class="flex flex-col items-center gap-2 text-brand-600">
+              <i class="fa-solid fa-circle-notch fa-spin text-3xl"></i>
+              <span class="text-xs font-bold">Memproses filter…</span>
+            </div>
+          </div>
+        </div>
+        <p class="mt-3 text-[11px] leading-relaxed text-ink/45">
+          <i class="fa-solid fa-circle-info mr-1 text-brand-300"></i>
+          Serik kotak untuk memotong area dokumen. Crop diterapkan otomatis saat pindah halaman atau menekan Export. Filter <strong>B&amp;W Tajam</strong> memakai adaptive thresholding untuk menghilangkan bayangan &amp; memutihkan kertas.
+        </p>
+
+        <!-- Rail thumbnail -->
+        <div id="cropRail" class="scrollbar-hide mt-3 flex gap-2 overflow-x-auto pb-1"></div>
+      </div>
+
+      <!-- CTA bawah -->
+      <div class="mt-4 flex flex-col gap-2 sm:flex-row">
+        <button id="btnAddMore" class="btn-ghost sm:w-auto w-full"><i class="fa-solid fa-plus"></i> Tambah Halaman</button>
+        <button id="btnExport" class="btn-primary flex-1 w-full">
+          <i class="fa-solid fa-file-export"></i> Proses &amp; Export PDF
+        </button>
+      </div>
+    </section>
+
+    <!-- ======================= SCREEN 3: PROSES OCR ======================= -->
+    <section id="screen-process" class="screen hidden">
+      <div class="card mx-auto max-w-2xl p-5 md:p-6">
+        <div class="flex items-center gap-3">
+          <span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600">
+            <i id="procIcon" class="fa-solid fa-wand-magic-sparkles fa-beat"></i>
+          </span>
+          <div class="min-w-0 flex-1">
+            <h2 id="procTitle" class="text-base font-extrabold">Memproses dokumen…</h2>
+            <p class="text-[11px] font-medium text-ink/45">OCR (ind+eng) berjalan di Web Worker — UI tetap responsif.</p>
+          </div>
+          <span id="procPercent" class="text-xl font-extrabold text-brand-600">0%</span>
+        </div>
+
+        <div class="mt-4 h-3 overflow-hidden rounded-full bg-brand-100/80">
+          <div id="procBarFill" class="proc-bar-fill h-full w-[0%]"></div>
+        </div>
+        <p id="procStatus" class="mt-2.5 min-h-[18px] text-sm font-semibold text-ink/70">Menyiapkan mesin OCR…</p>
+
+        <ul id="procList" class="mt-4 space-y-2"></ul>
+
+        <div class="mt-5 flex items-center justify-between gap-2">
+          <p class="text-[11px] text-ink/40"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Jangan tutup tab selama proses berjalan.</p>
+          <button id="btnCancelProc" class="btn-danger"><i class="fa-solid fa-ban"></i> Batalkan</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= SCREEN 4: HASIL ======================= -->
+    <section id="screen-result" class="screen hidden">
+      <!-- Banner sukses -->
+      <div class="card flex flex-wrap items-center gap-3 border-emerald-200/80 bg-emerald-50/80 p-4 md:p-5">
+        <span class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-500 text-xl text-white shadow-soft">
+          <i class="fa-solid fa-check"></i>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h2 class="text-base font-extrabold text-emerald-800">PDF berhasil dibuat &amp; terunduh otomatis!</h2>
+          <p id="resultMeta" class="mt-0.5 text-xs font-semibold text-emerald-700/80">—</p>
+        </div>
+        <i class="fa-solid fa-file-pdf hidden text-3xl text-emerald-300 sm:block"></i>
+      </div>
+
+      <div class="mt-4 grid gap-4 md:grid-cols-5">
+        <!-- Preview -->
+        <div class="card p-4 md:col-span-3 md:p-5">
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="section-title"><span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600"><i class="fa-solid fa-eye"></i></span> Preview PDF</h3>
+            <a id="pdfOpenTab" href="#" target="_blank" rel="noopener" class="btn-ghost !py-1.5 !text-xs">
+              <i class="fa-solid fa-arrow-up-right-from-square"></i> Buka di Tab Baru
+            </a>
+          </div>
+          <iframe id="pdfFrame" title="Preview PDF hasil scan" class="mt-3 h-[60vh] w-full rounded-xl border border-brand-100 bg-white" src="about:blank"></iframe>
+          <p class="mt-2 text-[11px] text-ink/45"><i class="fa-solid fa-magnifying-glass mr-1 text-brand-300"></i>PDF ini <strong>searchable</strong>: teks hasil OCR disisipkan transparan (rendering mode 3) di atas gambar — bisa dicari, diblok, dan dikutip.</p>
+        </div>
+
+        <!-- Aksi -->
+        <div class="flex flex-col gap-3 md:col-span-2">
+          <div class="card p-4 md:p-5">
+            <h3 class="section-title"><span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600"><i class="fa-solid fa-download"></i></span> Unduhan</h3>
+            <button id="btnDownloadPdf" class="btn-primary mt-3 w-full"><i class="fa-solid fa-file-arrow-down"></i> Unduh Ulang PDF</button>
+            <button id="btnSplitZip" class="btn-ghost mt-2 w-full" disabled>
+              <i class="fa-solid fa-file-zip"></i> Download Split ZIP (Per Halaman)
+            </button>
+            <p class="mt-2.5 text-[11px] leading-relaxed text-ink/45">
+              ZIP berisi satu PDF per halaman (<code class="rounded bg-brand-50 px-1">Document_Page_01.pdf</code>, <code class="rounded bg-brand-50 px-1">Document_Page_02.pdf</code>, …) dengan nama arsip <code class="rounded bg-brand-50 px-1">Scanned_Pages_Split.zip</code>.
+            </p>
+          </div>
+
+          <div class="card flex-1 p-4 md:p-5">
+            <h3 class="section-title"><span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600"><i class="fa-solid fa-rotate"></i></span> Mulai Lagi</h3>
+            <p class="mt-2 text-xs leading-relaxed text-ink/50">Hapus semua halaman &amp; bebaskan memori (canvas + object URL) untuk sesi scan baru.</p>
+            <button id="btnNewScan" class="btn-soft mt-3 w-full"><i class="fa-solid fa-arrows-rotate"></i> Scan Baru</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-brand-100/70 py-5 text-center text-[11px] font-medium text-ink/40">
+    ezScan · dibuat dengan HTML5 Canvas, Tesseract.js, Cropper.js, jsPDF &amp; JSZip — tanpa backend.
+  </footer>
+
+  <!-- Toast container -->
+  <div id="toasts" class="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex flex-col items-center gap-2 px-4"></div>
+
+  <!-- ======================= LIBRARIES ======================= -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+  <!-- App -->
+  <script src="js/app.js"></script>
+</body>
+</html>
