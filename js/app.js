@@ -40,6 +40,8 @@ const cropPageLabel  = $('#cropPageLabel');
 const btnPrevPage    = $('#btnPrevPage');
 const btnNextPage    = $('#btnNextPage');
 const filterSeg      = $('#filterSeg');
+const btnRotateLeft  = $('#btnRotateLeft');
+const btnRotateRight = $('#btnRotateRight');
 const btnResetCrop   = $('#btnResetCrop');
 const btnApplyCrop   = $('#btnApplyCrop');
 const cropImage      = $('#cropImage');
@@ -47,6 +49,7 @@ const cropSpinner    = $('#cropSpinner');
 const cropRail       = $('#cropRail');
 const btnAddMore     = $('#btnAddMore');
 const btnExport      = $('#btnExport');
+const pageNameInput  = $('#pageNameInput');
 
 const procTitle      = $('#procTitle');
 const procStatus     = $('#procStatus');
@@ -85,6 +88,7 @@ const state = {
   pdfBlob: null,
   pdfURL: null,
   pdfName: '',
+  documentName: '',
 };
 
 /* =========================================================
@@ -131,6 +135,27 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function sanitizeFileStem(value) {
+  const raw = String(value || '').trim();
+  const cleaned = raw.replace(/[<>:"/\\|?*\x00-\x1F]+/g, '').replace(/\s+/g, '_').trim();
+  return cleaned;
+}
+
+function getDefaultPageName(index) {
+  return `Document_Page_${String(index + 1).padStart(2, '0')}`;
+}
+
+function getDocumentBaseName() {
+  const custom = sanitizeFileStem(state.documentName);
+  return custom || 'Scanned_Document';
+}
+
+function getPageExportName(page, index) {
+  if (!page) return getDefaultPageName(index);
+  const raw = sanitizeFileStem(page.name || '');
+  return raw || getDefaultPageName(index);
 }
 
 function throwIfCancelled() {
@@ -369,8 +394,10 @@ function capturePhoto() {
  * MANAJEMEN HALAMAN
  * ========================================================= */
 function addPage(sourceDataURL) {
+  const newIndex = state.pages.length;
   state.pages.push({
     id: state.nextPageId++,
+    name: '',
     source: sourceDataURL,
     filter: state.filterMode,
     filterCache: {},
@@ -380,6 +407,7 @@ function addPage(sourceDataURL) {
     exportW: 0,
     exportH: 0,
   });
+  state.cropIndex = newIndex;
   syncPageUI();
 }
 
@@ -447,6 +475,15 @@ function renderCropRail() {
     </button>`).join('');
 }
 
+function syncPageNameInput() {
+  const page = state.pages[state.cropIndex];
+  const hasPage = !!page;
+  pageNameInput.disabled = !hasPage;
+  const docBase = getDocumentBaseName();
+  pageNameInput.value = state.documentName || '';
+  pageNameInput.placeholder = hasPage ? `Opsional • ${docBase || 'Scanned_Document'}` : 'Opsional • Scanned_Document';
+}
+
 function syncPageUI() {
   const n = state.pages.length;
   pageCountChip.innerHTML = `<i class="fa-solid fa-files"></i> ${n} Halaman${n ? ' Ditangkap' : ''}`;
@@ -456,6 +493,7 @@ function syncPageUI() {
   btnPrevPage.disabled = state.cropIndex <= 0;
   btnNextPage.disabled = state.cropIndex >= n - 1;
   renderThumbGrid();
+  syncPageNameInput();
   if (state.screen === 'crop') renderCropRail();
 }
 
@@ -519,7 +557,7 @@ function initCropper(src) {
       guides: true,
       center: false,
       highlight: false,
-      rotatable: false,
+      rotatable: true,
       scalable: false,
       zoomable: true,
       zoomOnWheel: true,
@@ -605,17 +643,17 @@ async function setFilterMode(mode) {
 async function applyCropToPage(index, { interactive = false } = {}) {
   const page = state.pages[index];
   if (!page || !state.cropper || !state.cropDirty) return false;
-  const d = state.cropper.getData(true);
-  if (!d || d.width < 8 || d.height < 8) return false;
+
   try {
-    const img = await loadImage(page.source);
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(d.width);
-    canvas.height = Math.round(d.height);
-    canvas.getContext('2d', { willReadFrequently: true })
-      .drawImage(img, d.x, d.y, d.width, d.height, 0, 0, canvas.width, canvas.height);
+    const canvas = state.cropper.getCroppedCanvas({
+      imageSmoothingEnabled: true,
+      imageSmoothingQuality: 'high',
+    });
+    if (!canvas || canvas.width < 8 || canvas.height < 8) return false;
+
     page.source = canvas.toDataURL('image/jpeg', JPEG_STORE_QUALITY);
     page.filterCache = {}; // cache filter tidak valid lagi
+    page.filter = state.filterMode;
     freeCanvas(canvas);
     state.cropDirty = false;
     syncPageUI();
@@ -856,7 +894,8 @@ async function runPipeline() {
       doc.addPage([pw, ph], pw > ph ? 'l' : 'p');
       addPageContent(doc, state.pages[i]);
     }
-    state.pdfName = `ezScan_${stamp()}.pdf`;
+    const baseName = getDocumentBaseName();
+    state.pdfName = `${baseName}.pdf`;
     state.pdfBlob = doc.output('blob');
     setProgress(1, 'Selesai!');
 
@@ -894,11 +933,12 @@ async function buildSplitZip() {
   btnSplitZip.disabled = true;
   try {
     const zip = new JSZip();
+    const baseName = getDocumentBaseName();
     for (let i = 0; i < state.pages.length; i++) {
       const page = state.pages[i];
       const doc = newPdfForPage(page);
       addPageContent(doc, page);
-      const name = `Document_Page_${String(i + 1).padStart(2, '0')}.pdf`; // Page_01, Page_02, …
+      const name = `${baseName}_${String(i + 1).padStart(2, '0')}.pdf`;
       zip.file(name, doc.output('arraybuffer'));
       btnSplitZip.innerHTML = `<i class="fa-solid fa-box-archive"></i> Mengemas ${i + 1}/${state.pages.length}…`;
       await tick(0); // yield UI
@@ -907,8 +947,9 @@ async function buildSplitZip() {
       { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } },
       (meta) => { btnSplitZip.innerHTML = `<i class="fa-solid fa-file-zip fa-beat"></i> Kompresi ${Math.round(meta.percent)}%`; }
     );
-    saveAs(blob, 'Scanned_Pages_Split.zip');
-    toast('Scanned_Pages_Split.zip terunduh.', 'ok');
+    const zipName = `${baseName}.zip`;
+    saveAs(blob, zipName);
+    toast(`${zipName} terunduh.`, 'ok');
   } catch (e) {
     console.error(e);
     toast(`Gagal membuat ZIP: ${e && e.message ? e.message : e}`, 'err', 5000);
@@ -927,6 +968,8 @@ function resetAll() {
   state.cropIndex = 0;
   state.pdfBlob = null;
   state.pdfName = '';
+  state.documentName = '';
+  pageNameInput.value = '';
   if (state.pdfURL) { URL.revokeObjectURL(state.pdfURL); state.pdfURL = null; } // memory cleanup
   pdfFrame.src = 'about:blank';
   pdfOpenTab.href = '#';
@@ -991,11 +1034,26 @@ function bindEvents() {
     const btn = e.target.closest('.seg-btn');
     if (btn) setFilterMode(btn.dataset.filter);
   });
+  btnRotateLeft.addEventListener('click', () => {
+    if (!state.cropper) return;
+    state.cropper.rotate(-90);
+    state.cropDirty = true;
+  });
+  btnRotateRight.addEventListener('click', () => {
+    if (!state.cropper) return;
+    state.cropper.rotate(90);
+    state.cropDirty = true;
+  });
   btnApplyCrop.addEventListener('click', () => applyCropToPage(state.cropIndex, { interactive: true }));
   btnResetCrop.addEventListener('click', () => {
     if (!state.cropper) return;
     state.cropper.reset();
     state.cropDirty = false;
+  });
+
+  pageNameInput.addEventListener('input', (e) => {
+    state.documentName = e.target.value;
+    syncPageNameInput();
   });
 
   // Pipeline & hasil

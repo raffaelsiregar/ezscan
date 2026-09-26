@@ -165,6 +165,18 @@
 
           <div id="thumbGrid" class="mt-4 grid grid-cols-3 gap-2"></div>
 
+          <div class="mt-4">
+            <label for="pageNameInput" class="mb-1.5 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-ink/45">Nama file</label>
+            <input
+              id="pageNameInput"
+              type="text"
+              maxlength="50"
+              class="w-full rounded-xl border border-brand-200 bg-brand-50/50 px-3 py-2 text-sm font-semibold text-ink placeholder:text-ink/30 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200"
+              placeholder="Opsional • Document_Page_01"
+              aria-label="Nama file halaman"
+            />
+          </div>
+
           <div id="emptyHint" class="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-brand-200 px-4 py-10 text-center">
             <i class="fa-regular fa-file-lines text-3xl text-brand-300"></i>
             <p class="text-sm font-semibold text-ink/60">Belum ada halaman</p>
@@ -208,6 +220,8 @@
             <button data-filter="original" class="seg-btn" role="tab"><i class="fa-regular fa-image"></i> Asli</button>
           </div>
           <div class="ml-auto flex gap-2">
+            <button id="btnRotateLeft" class="btn-ghost !px-3" title="Putar kiri" aria-label="Putar kiri"><i class="fa-solid fa-rotate-left"></i></button>
+            <button id="btnRotateRight" class="btn-ghost !px-3" title="Putar kanan" aria-label="Putar kanan"><i class="fa-solid fa-rotate-right"></i></button>
             <button id="btnResetCrop" class="btn-ghost"><i class="fa-solid fa-rotate-left"></i> <span class="hidden sm:inline">Reset</span></button>
             <button id="btnApplyCrop" class="btn-soft"><i class="fa-solid fa-check"></i> Terapkan Crop</button>
           </div>
