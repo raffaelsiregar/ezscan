@@ -103,7 +103,7 @@
             <span id="camStatus" class="chip bg-ink/5 text-ink/50"><i class="fa-regular fa-clock"></i> Idle</span>
           </div>
 
-          <div id="cameraFrame" class="relative mt-3 h-[44vh] min-h-[300px] overflow-hidden rounded-2xl bg-ink/90 md:h-[52vh]">
+          <div id="cameraFrame" class="relative mx-auto mt-3 aspect-[3/4] w-full max-w-md overflow-hidden rounded-2xl bg-ink/90">
             <video id="video" autoplay playsinline muted class="h-full w-full object-cover"></video>
 
             <!-- Panduan sudut dokumen -->
@@ -216,7 +216,7 @@
         <div class="flex flex-wrap items-center gap-2">
           <div id="filterSeg" class="flex rounded-xl bg-brand-50 p-1" role="tablist" aria-label="Mode filter">
             <button data-filter="bw" class="seg-btn" role="tab"><i class="fa-solid fa-circle-half-stroke"></i> B&amp;W Tajam</button>
-            <button data-filter="enhanced" class="seg-btn" role="tab"><i class="fa-solid fa-wand-magic-sparkles"></i> Warna</button>
+            <button data-filter="enhanced" class="seg-btn" role="tab"><i class="fa-solid fa-wand-magic-sparkles"></i> Scan Warna</button>
             <button data-filter="original" class="seg-btn" role="tab"><i class="fa-regular fa-image"></i> Asli</button>
           </div>
           <div class="ml-auto flex gap-2">
@@ -225,6 +225,12 @@
             <button id="btnResetCrop" class="btn-ghost"><i class="fa-solid fa-rotate-left"></i> <span class="hidden sm:inline">Reset</span></button>
             <button id="btnApplyCrop" class="btn-soft"><i class="fa-solid fa-check"></i> Terapkan Crop</button>
           </div>
+        </div>
+
+        <div class="mt-3 flex items-center gap-3">
+          <label for="enhanceStrength" class="text-sm font-bold">Kekuatan efek</label>
+          <input id="enhanceStrength" type="range" min="0" max="100" value="100" class="min-w-0 flex-1 accent-violet-500" />
+          <output id="enhanceValue" for="enhanceStrength" class="text-sm tabular-nums">100%</output>
         </div>
 
         <!-- Area Cropper -->
@@ -239,7 +245,7 @@
         </div>
         <p class="mt-3 text-[11px] leading-relaxed text-ink/45">
           <i class="fa-solid fa-circle-info mr-1 text-brand-300"></i>
-          Serik kotak untuk memotong area dokumen. Crop diterapkan otomatis saat pindah halaman atau menekan Export. Filter <strong>B&amp;W Tajam</strong> memakai adaptive thresholding untuk menghilangkan bayangan &amp; memutihkan kertas.
+          Seret kotak untuk memotong area dokumen. Crop diterapkan otomatis saat pindah halaman atau menekan Export. Filter <strong>B&amp;W Tajam</strong> memakai adaptive thresholding untuk menghilangkan bayangan &amp; memutihkan kertas.
         </p>
 
         <!-- Rail thumbnail -->

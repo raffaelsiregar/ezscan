@@ -147,14 +147,28 @@ html {
   background-color: #8B7CF6;
 }
 .cropper-point {
-  width: 7px;
-  height: 7px;
+  width: 10px;
+  height: 10px;
   opacity: 0.95;
 }
 .cropper-point.point-se,
 .cropper-point.point-sw,
 .cropper-point.point-ne,
 .cropper-point.point-nw { border-radius: 9999px; }
+/* Handle sisi (atas/bawah/kiri/kanan) dibuat memanjang agar mudah
+   di-drag dengan jari — inilah satu-satunya cara mengatur crop. */
+.cropper-point.point-n,
+.cropper-point.point-s {
+  width: 12px;
+  height: 28px;
+  border-radius: 9999px;
+}
+.cropper-point.point-e,
+.cropper-point.point-w {
+  width: 28px;
+  height: 12px;
+  border-radius: 9999px;
+}
 .cropper-dashed { border-color: rgba(139, 124, 246, 0.55); }
 .cropper-modal { background-color: rgba(55, 50, 74, 0.5); }
 

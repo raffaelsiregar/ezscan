@@ -44,6 +44,8 @@ const btnRotateLeft  = $('#btnRotateLeft');
 const btnRotateRight = $('#btnRotateRight');
 const btnResetCrop   = $('#btnResetCrop');
 const btnApplyCrop   = $('#btnApplyCrop');
+const enhanceStrength = $('#enhanceStrength');
+const enhanceValue = $('#enhanceValue');
 const cropImage      = $('#cropImage');
 const cropSpinner    = $('#cropSpinner');
 const cropRail       = $('#cropRail');
@@ -74,7 +76,6 @@ const state = {
   nextPageId: 1,
   cropIndex: 0,
   cropToken: 0,         // guard untuk operasi async pada cropper
-  restoreCrop: null,    // restore posisi crop box setelah cropper.replace()
   cropDirty: false,
   cropper: null,
   stream: null,
@@ -242,43 +243,68 @@ function binarizeCanvas(canvas) {
   ctx.putImageData(imgData, 0, 0);
 }
 
-/* Color Enhanced — kontras + kecerahan + saturasi via LUT per-piksel (cross-browser) */
+/* Normalize local paper illumination while retaining colored ink. */
 function enhanceCanvas(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const d = imgData.data;
-  const CONTRAST = 1.24, BRIGHT = 8, SAT = 0.12;
-  for (let i = 0; i < d.length; i += 4) {
-    const r = (d[i] - 128) * CONTRAST + 128 + BRIGHT;
-    const g = (d[i + 1] - 128) * CONTRAST + 128 + BRIGHT;
-    const b = (d[i + 2] - 128) * CONTRAST + 128 + BRIGHT;
-    const avg = (r + g + b) / 3;
-    d[i]     = r + (r - avg) * SAT;   // Uint8ClampedArray meng-clamp otomatis
-    d[i + 1] = g + (g - avg) * SAT;
-    d[i + 2] = b + (b - avg) * SAT;
+  const { width: w, height: h } = canvas;
+  const image = ctx.getImageData(0, 0, w, h);
+  const d = image.data;
+  const stride = w + 1;
+  const sums = new Float64Array(stride * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let row = 0;
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      row += Math.max(d[i], d[i + 1], d[i + 2]);
+      sums[(y + 1) * stride + x + 1] = sums[y * stride + x + 1] + row;
+    }
   }
-  ctx.putImageData(imgData, 0, 0);
+  const radius = Math.max(8, Math.round(Math.min(w, h) / 20));
+  for (let y = 0; y < h; y++) {
+    const top = Math.max(0, y - radius), bottom = Math.min(h, y + radius + 1);
+    for (let x = 0; x < w; x++) {
+      const left = Math.max(0, x - radius), right = Math.min(w, x + radius + 1);
+      const sum = sums[bottom * stride + right] - sums[top * stride + right]
+        - sums[bottom * stride + left] + sums[top * stride + left];
+      const paper = Math.max(32, sum / ((right - left) * (bottom - top)));
+      const i = (y * w + x) * 4;
+      for (let c = 0; c < 3; c++) d[i + c] = (d[i + c] * 255 / paper - 128) * 1.18 + 140;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
 }
 
-function applyFilterToCanvas(canvas, mode) {
+function applyFilterToCanvas(canvas, mode, strength = 100) {
+  if (mode === 'original' || strength === 0) return;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const original = strength < 100 ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
   if (mode === 'bw') binarizeCanvas(canvas);
   else if (mode === 'enhanced') enhanceCanvas(canvas);
+  if (original) {
+    const filtered = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const amount = strength / 100;
+    for (let i = 0; i < filtered.data.length; i += 4) {
+      for (let c = 0; c < 3; c++) filtered.data[i + c] = original.data[i + c] * (1 - amount) + filtered.data[i + c] * amount;
+    }
+    ctx.putImageData(filtered, 0, 0);
+  }
 }
 
 /* Versi ter-filter (dataURL) untuk preview cropper — dengan cache per halaman */
 async function getFilteredImage(page, mode) {
   if (mode === 'original') return page.source;
   if (!page.filterCache) page.filterCache = {};
-  if (page.filterCache[mode]) return page.filterCache[mode];
+  const key = `${mode}:${page.strength}`;
+  if (page.filterCache[key]) return page.filterCache[key];
   const img = await loadImage(page.source);
   const canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   canvas.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0);
-  applyFilterToCanvas(canvas, mode);
+  applyFilterToCanvas(canvas, mode, page.strength);
   const url = canvas.toDataURL('image/jpeg', JPEG_STORE_QUALITY);
   freeCanvas(canvas);
-  page.filterCache[mode] = url;
+  page.filterCache = { [key]: url };
   return url;
 }
 
@@ -301,8 +327,9 @@ async function startCamera() {
     audio: false,
     video: {
       facingMode: { ideal: state.facing },
-      width: { ideal: 1920 },
-      height: { ideal: 1440 },
+      width: { ideal: 1440 },
+      height: { ideal: 1920 },
+      aspectRatio: { ideal: 3 / 4 },
     },
   };
   let stream = null;
@@ -380,11 +407,13 @@ function capturePhoto() {
   void cameraFrame.offsetWidth; // restart animasi
   cameraFrame.classList.add('flash-active');
 
-  const scale = Math.min(1, MAX_DIM / Math.max(video.videoWidth, video.videoHeight));
+  const w = Math.min(video.videoWidth, video.videoHeight * 3 / 4);
+  const h = w * 4 / 3;
+  const scale = Math.min(1, MAX_DIM / h);
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
-  canvas.getContext('2d', { willReadFrequently: true }).drawImage(video, 0, 0, canvas.width, canvas.height);
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(h * scale);
+  canvas.getContext('2d', { willReadFrequently: true }).drawImage(video, (video.videoWidth - w) / 2, (video.videoHeight - h) / 2, w, h, 0, 0, canvas.width, canvas.height);
   const dataURL = canvas.toDataURL('image/jpeg', JPEG_STORE_QUALITY);
   freeCanvas(canvas);
   addPage(dataURL);
@@ -400,6 +429,8 @@ function addPage(sourceDataURL) {
     name: '',
     source: sourceDataURL,
     filter: state.filterMode,
+    strength: 100,
+    cropData: null,
     filterCache: {},
     ocrWords: null,
     ocrText: '',
@@ -513,6 +544,11 @@ function updateSteps(screenName) {
 function gotoScreen(name) {
   if (state.screen === name) return;
   if (state.screen === 'capture' && name !== 'capture') stopCamera();
+  if (state.screen === 'crop') {
+    applyCropToPage(state.cropIndex);
+    ++state.cropToken;
+    destroyCropper();
+  }
   state.screen = name;
   $$('.screen').forEach((s) => s.classList.add('hidden'));
   const target = $(`#screen-${name}`);
@@ -539,16 +575,19 @@ function destroyCropper() {
   state.cropDirty = false;
 }
 
-function initCropper(src) {
+function initCropper(src, data = null) {
   destroyCropper();
+  const token = state.cropToken;
   cropImage.onload = () => {
+    if (token !== state.cropToken || state.screen !== 'crop') return;
     if (typeof Cropper === 'undefined') {
       toast('Pustaka Cropper.js gagal dimuat. Periksa koneksi internet lalu muat ulang.', 'err');
       return;
     }
     state.cropper = new Cropper(cropImage, {
       viewMode: 1,
-      dragMode: 'crop',
+      dragMode: 'none',
+      cropBoxMovable: true,
       autoCrop: true,
       autoCropArea: 1.0,      // crop box awal mencakup seluruh gambar
       background: false,
@@ -556,7 +595,7 @@ function initCropper(src) {
       restore: false,
       guides: true,
       center: false,
-      highlight: false,
+      highlight: true,
       rotatable: true,
       scalable: false,
       zoomable: true,
@@ -565,11 +604,8 @@ function initCropper(src) {
       minCropBoxWidth: 40,
       minCropBoxHeight: 40,
       ready() {
-        // restore crop box setelah ganti sumber gambar (toggle filter)
-        if (state.restoreCrop) {
-          try { this.setData(state.restoreCrop); state.cropDirty = true; } catch (_) { /* noop */ }
-          state.restoreCrop = null;
-        }
+        if (data) state.cropper.setData(data);
+        state.cropDirty = false;
       },
       cropend() { state.cropDirty = true; },
       zoom() { state.cropDirty = true; },
@@ -583,7 +619,10 @@ function setCropSpinner(show) {
 }
 
 function syncFilterSeg(mode) {
-  $$('#filterSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.filter === mode));
+  $$('#filterSeg .seg-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.filter === mode);
+    b.setAttribute('aria-selected', String(b.dataset.filter === mode));
+  });
 }
 
 async function showCropPage(index) {
@@ -598,11 +637,15 @@ async function showCropPage(index) {
 
   syncPageUI();
   syncFilterSeg(page.filter);
+  enhanceStrength.value = page.strength;
+  enhanceStrength.disabled = page.filter === 'original';
+  enhanceValue.textContent = `${page.strength}%`;
+  destroyCropper();
   setCropSpinner(true);
   try {
     const src = await getFilteredImage(page, page.filter);
     if (token !== state.cropToken) return;
-    initCropper(src);
+    initCropper(src, page.cropData);
   } catch (e) {
     console.error(e);
     toast('Gagal menyiapkan gambar halaman.', 'err');
@@ -613,60 +656,39 @@ async function showCropPage(index) {
 
 async function setFilterMode(mode) {
   const page = state.pages[state.cropIndex];
-  if (!page || page.filter === mode) { syncFilterSeg(page ? page.filter : mode); return; }
+  if (!page) return;
+  await applyCropToPage(state.cropIndex);
   page.filter = mode;
-  state.filterMode = mode; // jadi default untuk halaman berikutnya
-  syncFilterSeg(mode);
-  setCropSpinner(true);
-  const token = state.cropToken;
-  try {
-    const src = await getFilteredImage(page, mode);
-    if (token !== state.cropToken) return;
-    if (state.cropper) {
-      // pertahankan posisi crop box saat preview filter berganti
-      state.restoreCrop = state.cropDirty ? state.cropper.getData(true) : null;
-      state.cropper.replace(src);
-    } else {
-      initCropper(src);
-    }
-  } catch (e) {
-    console.error(e);
-    toast('Gagal menerapkan filter.', 'err');
-  } finally {
-    if (token === state.cropToken) setCropSpinner(false);
-  }
+  state.filterMode = mode;
+  await showCropPage(state.cropIndex);
 }
 
-/* Terapkan crop: koordinat getData() adalah koordinat gambar asli
-   (dimensi identik dengan versi ter-filter), sehingga pemotongan
-   selalu dilakukan pada SUMBER asli agar warna tidak hilang. */
 async function applyCropToPage(index, { interactive = false } = {}) {
   const page = state.pages[index];
   if (!page || !state.cropper || !state.cropDirty) return false;
+  page.cropData = state.cropper.getData();
+  state.cropDirty = false;
+  if (interactive) toast(`Crop halaman ${index + 1} diterapkan.`, 'ok', 2000);
+  return true;
+}
 
-  try {
-    const canvas = state.cropper.getCroppedCanvas({
-      imageSmoothingEnabled: true,
-      imageSmoothingQuality: 'high',
-    });
-    if (!canvas || canvas.width < 8 || canvas.height < 8) return false;
-
-    page.source = canvas.toDataURL('image/jpeg', JPEG_STORE_QUALITY);
-    page.filterCache = {}; // cache filter tidak valid lagi
-    page.filter = state.filterMode;
-    freeCanvas(canvas);
-    state.cropDirty = false;
-    syncPageUI();
-    if (interactive) {
-      toast(`Crop halaman ${index + 1} diterapkan.`, 'ok', 2000);
-      await showCropPage(index);
-    }
-    return true;
-  } catch (e) {
-    console.error(e);
-    toast('Gagal menerapkan crop.', 'err');
-    return false;
-  }
+function cropSource(img, data) {
+  if (!data) return downscaleToCanvas(img);
+  const rotation = ((data.rotate || 0) % 360 + 360) % 360;
+  const rotated = document.createElement('canvas');
+  const sideways = rotation === 90 || rotation === 270;
+  rotated.width = sideways ? img.naturalHeight : img.naturalWidth;
+  rotated.height = sideways ? img.naturalWidth : img.naturalHeight;
+  const ctx = rotated.getContext('2d');
+  ctx.translate(rotated.width / 2, rotated.height / 2);
+  ctx.rotate(rotation * Math.PI / 180);
+  ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(data.width));
+  canvas.height = Math.max(1, Math.round(data.height));
+  canvas.getContext('2d').drawImage(rotated, data.x, data.y, data.width, data.height, 0, 0, canvas.width, canvas.height);
+  freeCanvas(rotated);
+  return canvas;
 }
 
 /* =========================================================
@@ -727,12 +749,8 @@ function collectWords(data) {
 /* Prepare satu halaman: filter → JPEG 0.78 untuk PDF & OCR */
 async function preparePage(page) {
   const img = await loadImage(page.source);
-  const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0);
-  applyFilterToCanvas(canvas, page.filter);
+  const canvas = cropSource(img, page.cropData);
+  applyFilterToCanvas(canvas, page.filter, page.strength);
   const jpeg = canvas.toDataURL('image/jpeg', JPEG_EXPORT_QUALITY);
   const out = { jpeg, w: canvas.width, h: canvas.height };
   freeCanvas(canvas); // memory cleanup
@@ -1048,7 +1066,17 @@ function bindEvents() {
   btnResetCrop.addEventListener('click', () => {
     if (!state.cropper) return;
     state.cropper.reset();
+    state.pages[state.cropIndex].cropData = null;
     state.cropDirty = false;
+  });
+
+  enhanceStrength.addEventListener('input', () => {
+    enhanceValue.textContent = `${enhanceStrength.value}%`;
+  });
+  enhanceStrength.addEventListener('change', async () => {
+    await applyCropToPage(state.cropIndex);
+    state.pages[state.cropIndex].strength = Number(enhanceStrength.value);
+    await showCropPage(state.cropIndex);
   });
 
   pageNameInput.addEventListener('input', (e) => {
