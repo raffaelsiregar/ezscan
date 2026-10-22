@@ -1,52 +1,41 @@
-# ezScan 📄✨
+# ezScan
 
-**Document Scanner & OCR — 100% client-side.** Aplikasi web single-page (SPA) untuk memindai dokumen multi-halaman langsung dari browser: kamera atau unggah gambar → crop manual → binarisasi adaptif → OCR (`ind`+`eng`) → **PDF searchable** dengan teks transparan → auto-download, preview, dan split ZIP per halaman. Tanpa backend; tidak ada data yang meninggalkan perangkat.
+A private, browser-based document scanner. Capture or upload multiple pages, automatically frame each document, enhance its appearance, and export a searchable PDF or a ZIP of individual pages. Photos and recognized text are processed on your device.
 
-## 🚀 Menjalankan
+## Run locally
 
-```bash
-cd ezScan
+```sh
 python3 -m http.server 8080
-# buka http://localhost:8080
 ```
 
-> **Catatan kamera:** `getUserMedia` membutuhkan *secure context*. `http://localhost` sudah cukup untuk pengembangan. Untuk akses dari LAN / produksi, sajikan via HTTPS (mis. GitHub Pages, Netlify, atau `npx serve` + tunnel HTTPS).
+Open `http://localhost:8080`. Camera access needs localhost or HTTPS. The app loads its libraries, fonts, and English/Indonesian OCR language data from external providers; it does not upload document content.
 
-## 🧱 Struktur
+## Scan a document
 
+1. **Capture:** use the portrait 3:4 camera or upload photos. The viewfinder shrinks to leave room for the camera controls when mobile browser bars are open.
+2. **Crop & Filter:** page bounds are suggested automatically. Adjust the handles if needed, then select **Apply crop** to see the cropped page as it will appear in the PDF. **Edit crop** reopens the original image with your saved selection. **Auto crop** retries detection; **Reset** restores the full image.
+3. Choose **B&W**, **Color**, or **Original**. One enhancement slider controls the effect strength. Filters never overwrite the original photo.
+4. **Create PDF:** text recognition runs on-device in English and Indonesian. Keep the tab open until it finishes. Download the combined PDF or separate PDFs in a ZIP.
+
+Automatic framing uses a rectangular document region. When the page cannot be distinguished confidently from the background, the full image is retained for manual framing. It does not straighten perspective.
+
+## Files
+
+- `index.html`: capture, crop, processing, and result screens.
+- `css/styles.css`: responsive layout and touch controls.
+- `js/document-crop.js`: document-bound detection on a downsampled image.
+- `js/app.js`: camera, page state, previews, filters, OCR, PDF, and ZIP export.
+- `tests/scan.cjs`: browser checks for filtering, cropping, automatic framing, previews, and mobile layout.
+
+Input images are limited to 2000 pixels on their longest edge. The camera targets 20–25 FPS. PDF pages preserve the cropped image proportions within A4 dimensions.
+
+## Tests
+
+```sh
+npm install
+npm test
 ```
-ezScan/
-├── index.html      # SPA: 4 screen (Capture → Crop & Filter → OCR → Hasil) + stepper
-├── css/styles.css  # Stepper, shutter, cropper theme, progress bar, toast
-└── js/app.js       # Seluruh logika (kamera, filter, OCR, PDF, ZIP)
-```
 
-**Pustaka (CDN):** Tailwind CSS · FontAwesome · Cropper.js 1.6 · Tesseract.js 5 (Web Worker) · jsPDF 2.5 · JSZip · FileSaver.js. Koneksi internet hanya dibutuhkan untuk memuat pustaka + data bahasa OCR (sekali; ~15 MB untuk `ind`+`eng`, di-cache browser).
+On macOS the test uses the installed Google Chrome. On other platforms install Playwright’s Chromium with `npx playwright install chromium`. Tests need internet access to load the app’s CDN libraries. Mobile checks simulate a camera and reduced viewport heights; they do not replace testing on a physical iPhone with Safari.
 
-## 🔄 Alur Pengguna
-
-1. **Capture & Collect** — kamera (preview dikunci **20–25 FPS**, `frameRate: { ideal: 22.5, min: 20, max: 25 }`) atau unggah multi-gambar. Halaman masuk ke array `state.pages` dengan counter/thumbnail; bisa terus menambah.
-2. **Crop & Filter (per halaman)** — crop box Cropper.js (diterapkan otomatis saat pindah halaman/Export), toggle filter **B&W Tajam** (adaptive thresholding) / **Warna** / **Asli** dengan preview langsung.
-3. **Batch OCR** — Tesseract.js berjalan sekuensial per halaman di **Web Worker** dengan progress bar ("Memproses OCR halaman 2 dari 5…") dan daftar status per halaman; bisa dibatalkan.
-4. **PDF Searchable** — tiap halaman menjadi halaman PDF berukuran proporsional gambar (fit A4, 72 DPI points); gambar JPEG terkompresi + teks OCR dengan `renderingMode: 'invisible'` (mode 3) pada koordinat bounding box hasil konversi (flip sumbu Y).
-5. **Export** — **auto-download** PDF, preview interaktif via `<iframe>` (+ tautan tab baru untuk mobile), tombol **Download Split ZIP** (`Document_Page_01.pdf`, `Document_Page_02.pdf`, … → `Scanned_Pages_Split.zip`).
-
-## ⚙️ Optimasi Teknis
-
-| Aspek | Implementasi |
-|---|---|
-| Anti-crash mobile | Downsample semua input (kamera 4K/48MP, unggahan) ke **maks 2000px** sebelum diproses |
-| UI non-freeze | OCR di Web Worker; pipeline `await` sekuensial + `yield` ke UI |
-| Memory cleanup | `canvas.width = 0` setelah tiap operasi; `URL.revokeObjectURL` setelah pakai; cache filter dibebaskan saat pindah halaman; stream kamera di-stop saat keluar screen |
-| Ukuran PDF | Gambar di dalam PDF `canvas.toDataURL('image/jpeg', 0.78)` + stream terkompresi jsPDF (`compress: true`) ≈ 3–5 MB per 10 halaman |
-| Koordinat OCR→PDF | `pt = px × (pagePt / imgPx)`; baseline = `pageH − y0·s − 0.8·boxH` (origin PDF kiri-bawah) |
-| FPS kamera | Constraint 20–25 fps (fallback `ideal` saja bila `OverconstrainedError`) |
-| Binarisasi | Adaptive thresholding (Bradley, integral image O(n), jendela ≈ minDim/14, T=0.86) — menghilangkan bayangan & memutihkan kertas |
-
-## 🔒 Privasi
-
-Semua pemrosesan (crop, filter, OCR, penyusunan PDF, ZIP) terjadi di browser. Tidak ada request berisi gambar/teks ke server mana pun.
-
-## 🛠 Debug
-
-Buka console: `ezScan.state`, `ezScan.addPage(dataURL)`, `ezScan.gotoScreen('crop')`; error runtime terkumpul di `window.__ezErrors`.
+For debugging, inspect `ezScan.state` and `window.__ezErrors` in the browser console.

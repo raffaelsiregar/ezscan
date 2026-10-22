@@ -44,6 +44,11 @@ const btnRotateLeft  = $('#btnRotateLeft');
 const btnRotateRight = $('#btnRotateRight');
 const btnResetCrop   = $('#btnResetCrop');
 const btnApplyCrop   = $('#btnApplyCrop');
+const btnAutoCrop    = $('#btnAutoCrop');
+const btnEditCrop    = $('#btnEditCrop');
+const cropStatus     = $('#cropStatus');
+const scanPreview    = $('#scanPreview');
+const previewBadge   = $('#previewBadge');
 const enhanceStrength = $('#enhanceStrength');
 const enhanceValue = $('#enhanceValue');
 const cropImage      = $('#cropImage');
@@ -112,7 +117,7 @@ function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Gagal memuat gambar.'));
+    img.onerror = () => reject(new Error('Could not load this image.'));
     img.src = src;
   });
 }
@@ -311,7 +316,7 @@ async function getFilteredImage(page, mode) {
 /* =========================================================
  * KAMERA (constraint FPS 20–25)
  * ========================================================= */
-function setCamStatus(text, cls = 'bg-ink/5 text-ink/50') {
+function setCamStatus(text, cls = 'bg-ink/5 text-ink/60') {
   camStatus.className = `chip ${cls}`;
   camStatus.innerHTML = `<i class="fa-regular fa-clock"></i> ${text}`;
 }
@@ -319,10 +324,10 @@ function setCamStatus(text, cls = 'bg-ink/5 text-ink/50') {
 async function startCamera() {
   if (state.stream) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showCameraError('Browser ini tidak mendukung akses kamera (MediaDevices). Silakan unggah gambar.');
+    showCameraError('This browser cannot access the camera. Upload photos instead.');
     return;
   }
-  setCamStatus('Meminta izin…', 'bg-amber-100 text-amber-600');
+  setCamStatus('Requesting access…', 'bg-amber-100 text-amber-600');
   const base = {
     audio: false,
     video: {
@@ -347,12 +352,16 @@ async function startCamera() {
           ...base,
           video: { ...base.video, frameRate: { ideal: 22.5 } },
         });
-        fpsChip.innerHTML = '<i class="fa-solid fa-bolt mr-1 text-brand-300"></i>FPS optimal';
+        fpsChip.innerHTML = '<i class="fa-solid fa-bolt mr-1 text-brand-300"></i>Optimized FPS';
       } else {
         throw err;
       }
     }
 
+    if (state.screen !== 'capture') {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
     state.stream = stream;
     state.camError = false;
     video.srcObject = stream;
@@ -362,13 +371,13 @@ async function startCamera() {
 
     const settings = stream.getVideoTracks()[0].getSettings();
     const fps = settings && settings.frameRate ? Math.round(settings.frameRate) : null;
-    setCamStatus(`Aktif${fps ? ` · ${fps} FPS` : ''}`, 'bg-emerald-100 text-emerald-600');
+    setCamStatus(`Live${fps ? ` · ${fps} FPS` : ''}`, 'bg-emerald-100 text-emerald-600');
   } catch (err) {
     console.error('Camera error:', err);
     showCameraError(
       err && err.name === 'NotAllowedError'
-        ? 'Izin kamera ditolak. Izinkan akses kamera di browser, atau gunakan unggah gambar.'
-        : 'Kamera tidak dapat diaktifkan di perangkat ini. Gunakan unggah gambar.'
+        ? 'Camera access was denied. Allow it in browser settings or upload photos.'
+        : 'The camera is unavailable. Try again or upload photos.'
     );
   }
 }
@@ -379,7 +388,7 @@ function showCameraError(message) {
   btnShutter.disabled = true;
   cameraOverlayText.textContent = message;
   cameraOverlay.style.display = '';
-  setCamStatus('Tidak aktif', 'bg-red-100 text-red-500');
+  setCamStatus('Camera off', 'bg-red-100 text-red-500');
 }
 
 function stopCamera() {
@@ -431,6 +440,10 @@ function addPage(sourceDataURL) {
     filter: state.filterMode,
     strength: 100,
     cropData: null,
+    autoCropChecked: false,
+    autoCropFound: false,
+    cropApplied: false,
+    preview: null,
     filterCache: {},
     ocrWords: null,
     ocrText: '',
@@ -445,10 +458,10 @@ function addPage(sourceDataURL) {
 async function handleFiles(fileList) {
   const files = Array.from(fileList).filter((f) => f.type && f.type.startsWith('image/'));
   if (!files.length) {
-    toast('File tidak didukung — pilih berkas gambar.', 'warn');
+    toast('Choose a supported image file.', 'warn');
     return;
   }
-  toast(`Menambahkan ${files.length} gambar…`, 'ok', 1600);
+  toast(`Adding ${files.length} photo${files.length === 1 ? '' : 's'}…`, 'ok', 1600);
   for (const file of files) {
     const objectURL = URL.createObjectURL(file);
     try {
@@ -459,7 +472,7 @@ async function handleFiles(fileList) {
       addPage(dataURL);
     } catch (e) {
       console.error(e);
-      toast(`Gagal membaca "${file.name}".`, 'err');
+      toast(`Could not read "${file.name}".`, 'err');
     } finally {
       URL.revokeObjectURL(objectURL); // memory cleanup object URL
     }
@@ -469,13 +482,14 @@ async function handleFiles(fileList) {
 
 function deletePage(index) {
   state.pages.splice(index, 1);
+  state.cropIndex = Math.max(0, Math.min(state.cropIndex, state.pages.length - 1));
   if (state.screen === 'crop') {
     if (!state.pages.length) { gotoScreen('capture'); return; }
     state.cropIndex = Math.min(state.cropIndex, state.pages.length - 1);
     showCropPage(state.cropIndex);
   }
   syncPageUI();
-  toast(`Halaman ${index + 1} dihapus.`, 'warn', 2000);
+  toast(`Page ${index + 1} deleted.`, 'warn', 2000);
 }
 
 /* =========================================================
@@ -484,11 +498,12 @@ function deletePage(index) {
 function renderThumbGrid() {
   thumbGrid.innerHTML = state.pages.map((p, i) => `
     <div class="group relative overflow-hidden rounded-xl border border-brand-100 bg-white shadow-sm">
-      <img src="${p.source}" class="aspect-[3/4] w-full cursor-pointer object-cover transition group-hover:opacity-90"
-           data-open="${i}" alt="Halaman ${i + 1}" />
+      <button data-open="${i}" class="block w-full" aria-label="Review page ${i + 1}">
+        <img src="${p.preview || p.source}" class="aspect-[3/4] w-full object-contain transition group-hover:opacity-90" alt="Page ${i + 1}" />
+      </button>
       <span class="absolute left-1 top-1 rounded-md bg-ink/70 px-1.5 py-0.5 text-[10px] font-bold text-white">${i + 1}</span>
-      <button data-del="${i}" aria-label="Hapus halaman ${i + 1}"
-              class="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-md bg-ink/70 text-white transition hover:!bg-red-500">
+      <button data-del="${i}" aria-label="Delete page ${i + 1}"
+              class="absolute right-1 top-1 grid h-8 w-8 place-items-center rounded-md bg-ink/70 text-white transition hover:!bg-red-500">
         <i class="fa-solid fa-xmark text-[11px]"></i>
       </button>
       ${p.filter === 'bw' ? '<span class="absolute bottom-1 left-1 rounded bg-brand-500/90 px-1 py-0.5 text-[8px] font-bold text-white">B&W</span>' : ''}
@@ -501,7 +516,7 @@ function renderCropRail() {
     <button data-rail="${i}"
       class="relative shrink-0 overflow-hidden rounded-lg border-2 transition
              ${i === state.cropIndex ? 'border-brand-500 ring-2 ring-brand-200' : 'border-brand-100 opacity-70 hover:opacity-100'}">
-      <img src="${p.source}" class="h-16 w-12 object-cover" alt="Halaman ${i + 1}" />
+      <img src="${p.preview || p.source}" class="h-16 w-12 object-contain" alt="Page ${i + 1}" />
       <span class="absolute bottom-0 left-0 right-0 bg-ink/70 text-center text-[9px] font-bold text-white">${i + 1}</span>
     </button>`).join('');
 }
@@ -512,15 +527,15 @@ function syncPageNameInput() {
   pageNameInput.disabled = !hasPage;
   const docBase = getDocumentBaseName();
   pageNameInput.value = state.documentName || '';
-  pageNameInput.placeholder = hasPage ? `Opsional • ${docBase || 'Scanned_Document'}` : 'Opsional • Scanned_Document';
+  pageNameInput.placeholder = hasPage ? `Optional · ${docBase || 'Scanned_Document'}` : 'Optional · Scanned_Document';
 }
 
 function syncPageUI() {
   const n = state.pages.length;
-  pageCountChip.innerHTML = `<i class="fa-solid fa-files"></i> ${n} Halaman${n ? ' Ditangkap' : ''}`;
+  pageCountChip.innerHTML = `<i class="fa-solid fa-files"></i> ${n} page${n === 1 ? '' : 's'}`;
   btnToCrop.disabled = n === 0;
   btnExport.disabled = n === 0;
-  cropPageLabel.textContent = n ? `Halaman ${state.cropIndex + 1}/${n}` : 'Halaman 0/0';
+  cropPageLabel.textContent = n ? `Page ${state.cropIndex + 1} of ${n}` : 'Page 0 of 0';
   btnPrevPage.disabled = state.cropIndex <= 0;
   btnNextPage.disabled = state.cropIndex >= n - 1;
   renderThumbGrid();
@@ -535,6 +550,8 @@ function updateSteps(screenName) {
     const s = Number(el.dataset.step);
     el.classList.toggle('active', s === current);
     el.classList.toggle('done', s < current);
+    if (s === current) el.setAttribute('aria-current', 'step');
+    else el.removeAttribute('aria-current');
   });
   $$('#stepper .step-line').forEach((el, idx) => {
     el.classList.toggle('done', idx + 1 < current);
@@ -550,6 +567,7 @@ function gotoScreen(name) {
     destroyCropper();
   }
   state.screen = name;
+  document.body.dataset.screen = name;
   $$('.screen').forEach((s) => s.classList.add('hidden'));
   const target = $(`#screen-${name}`);
   target.classList.remove('hidden');
@@ -558,7 +576,7 @@ function gotoScreen(name) {
   void target.offsetWidth;
   target.style.animation = '';
   updateSteps(name);
-  window.scrollTo({ top: 0 });
+  window.scrollTo({ top: 0, behavior: 'instant' });
 
   if (name === 'capture' && !state.stream && !state.camError) startCamera();
   if (name === 'crop') showCropPage(state.cropIndex);
@@ -568,6 +586,7 @@ function gotoScreen(name) {
  * SCREEN 2 — CROP & FILTER (Cropper.js)
  * ========================================================= */
 function destroyCropper() {
+  cropImage.onload = null;
   if (state.cropper) {
     try { state.cropper.destroy(); } catch (_) { /* noop */ }
     state.cropper = null;
@@ -581,7 +600,8 @@ function initCropper(src, data = null) {
   cropImage.onload = () => {
     if (token !== state.cropToken || state.screen !== 'crop') return;
     if (typeof Cropper === 'undefined') {
-      toast('Pustaka Cropper.js gagal dimuat. Periksa koneksi internet lalu muat ulang.', 'err');
+      toast('The crop editor could not load. Check your connection and reload.', 'err');
+      setCropSpinner(false);
       return;
     }
     state.cropper = new Cropper(cropImage, {
@@ -598,14 +618,19 @@ function initCropper(src, data = null) {
       highlight: true,
       rotatable: true,
       scalable: false,
-      zoomable: true,
-      zoomOnWheel: true,
+      zoomable: false,
+      zoomOnWheel: false,
       toggleDragModeOnDblclick: false,
       minCropBoxWidth: 40,
       minCropBoxHeight: 40,
       ready() {
+        if (token !== state.cropToken) return;
         if (data) state.cropper.setData(data);
         state.cropDirty = false;
+        btnApplyCrop.disabled = false;
+        btnExport.disabled = false;
+        btnRotateLeft.disabled = btnRotateRight.disabled = false;
+        setCropSpinner(false);
       },
       cropend() { state.cropDirty = true; },
       zoom() { state.cropDirty = true; },
@@ -621,7 +646,7 @@ function setCropSpinner(show) {
 function syncFilterSeg(mode) {
   $$('#filterSeg .seg-btn').forEach((b) => {
     b.classList.toggle('active', b.dataset.filter === mode);
-    b.setAttribute('aria-selected', String(b.dataset.filter === mode));
+    b.setAttribute('aria-pressed', String(b.dataset.filter === mode));
   });
 }
 
@@ -641,17 +666,65 @@ async function showCropPage(index) {
   enhanceStrength.disabled = page.filter === 'original';
   enhanceValue.textContent = `${page.strength}%`;
   destroyCropper();
+  setCropView(page.cropApplied);
+  scanPreview.removeAttribute('src');
   setCropSpinner(true);
+  btnApplyCrop.disabled = true;
+  btnRotateLeft.disabled = btnRotateRight.disabled = true;
+  btnExport.disabled = true;
   try {
+    if (!page.autoCropChecked) await autoCropPage(page);
+    if (token !== state.cropToken) return;
+    if (page.cropApplied) {
+      const preview = await preparePage(page);
+      if (token !== state.cropToken) return;
+      page.preview = preview.jpeg;
+      scanPreview.src = preview.jpeg;
+      syncPageUI();
+      setCropSpinner(false);
+      return;
+    }
+    cropStatus.textContent = page.autoCropFound
+      ? 'Page edges found. Apply the crop or fine-tune the handles.'
+      : 'Check the frame. Drag the handles if the page edges need adjusting.';
     const src = await getFilteredImage(page, page.filter);
     if (token !== state.cropToken) return;
     initCropper(src, page.cropData);
   } catch (e) {
     console.error(e);
-    toast('Gagal menyiapkan gambar halaman.', 'err');
-  } finally {
+    toast('Could not prepare this page. Please try again.', 'err');
     if (token === state.cropToken) setCropSpinner(false);
   }
+}
+
+function setCropView(preview) {
+  $('.crop-actions').classList.toggle('preview-mode', preview);
+  cropImage.hidden = preview;
+  scanPreview.hidden = !preview;
+  previewBadge.hidden = !preview;
+  btnApplyCrop.hidden = preview;
+  btnEditCrop.hidden = !preview;
+  btnAutoCrop.hidden = preview;
+  btnRotateLeft.hidden = btnRotateRight.hidden = preview;
+  $('#cropHelp').textContent = preview
+    ? 'Ready to save? Create your PDF below, or edit the crop to adjust the page edges.'
+    : 'We suggest the page edges automatically. Adjust the handles if needed, then apply the crop to preview your scan.';
+  if (preview) cropStatus.textContent = 'Cropped preview · This is how your page will appear in the PDF.';
+}
+
+async function autoCropPage(page) {
+  const img = await loadImage(page.source);
+  const small = downscaleToCanvas(img, 320);
+  const bounds = detectDocumentBounds(small.getContext('2d').getImageData(0, 0, small.width, small.height));
+  if (bounds) {
+    page.cropData = { x: bounds.x * img.naturalWidth / small.width,
+      y: bounds.y * img.naturalHeight / small.height,
+      width: bounds.width * img.naturalWidth / small.width,
+      height: bounds.height * img.naturalHeight / small.height, rotate: 0 };
+  }
+  page.autoCropChecked = true;
+  page.autoCropFound = !!bounds;
+  freeCanvas(small);
 }
 
 async function setFilterMode(mode) {
@@ -665,10 +738,15 @@ async function setFilterMode(mode) {
 
 async function applyCropToPage(index, { interactive = false } = {}) {
   const page = state.pages[index];
-  if (!page || !state.cropper || !state.cropDirty) return false;
-  page.cropData = state.cropper.getData();
+  if (!page || index !== state.cropIndex || !state.cropper?.ready) return false;
+  const data = state.cropper.getData();
+  if (data.width < 1 || data.height < 1) return false;
+  page.cropData = data;
   state.cropDirty = false;
-  if (interactive) toast(`Crop halaman ${index + 1} diterapkan.`, 'ok', 2000);
+  if (interactive) {
+    page.cropApplied = true;
+    await showCropPage(index);
+  }
   return true;
 }
 
@@ -696,17 +774,17 @@ function cropSource(img, data) {
  * ========================================================= */
 function humanizeTessStatus(status) {
   const map = {
-    'loading tesseract core': 'Memuat mesin OCR (WASM core)…',
-    'initializing tesseract': 'Inisialisasi mesin OCR…',
-    'loading language traineddata': 'Memuat data bahasa ind+eng (sekali saja)…',
-    'initializing api': 'Menyiapkan API OCR…',
+    'loading tesseract core': 'Loading text recognition…',
+    'initializing tesseract': 'Starting text recognition…',
+    'loading language traineddata': 'Loading English and Indonesian language data…',
+    'initializing api': 'Preparing text recognition…',
   };
-  return map[status] || 'Menyiapkan mesin OCR…';
+  return map[status] || 'Preparing text recognition…';
 }
 
 async function ensureWorker() {
   if (state.worker) return state.worker;
-  if (typeof Tesseract === 'undefined') throw new Error('Pustaka Tesseract.js gagal dimuat. Periksa koneksi internet.');
+  if (typeof Tesseract === 'undefined') throw new Error('Text recognition could not load. Check your connection.');
   state.worker = await Tesseract.createWorker(OCR_LANGS, 1, { logger: onOcrLog });
   try { await state.worker.setParameters({ preserve_interword_spaces: '1' }); } catch (_) { /* noop */ }
   return state.worker;
@@ -718,7 +796,7 @@ function onOcrLog(m) {
   if (m.status === 'recognizing text' && state.ocrActiveIndex >= 0) {
     const i = state.ocrActiveIndex;
     const frac = 0.08 + 0.92 * (i + 0.15 + 0.85 * (m.progress || 0)) / n;
-    setProgress(frac, `Memproses OCR halaman ${i + 1} dari ${n}…`);
+    setProgress(frac, `Recognizing text on page ${i + 1} of ${n}…`);
     updateRowOcr(i, m.progress || 0);
   } else if (m.progress != null && state.ocrActiveIndex < 0) {
     setProgress(0.02 + 0.06 * m.progress, humanizeTessStatus(m.status));
@@ -748,6 +826,7 @@ function collectWords(data) {
 
 /* Prepare satu halaman: filter → JPEG 0.78 untuk PDF & OCR */
 async function preparePage(page) {
+  if (!page.autoCropChecked) await autoCropPage(page);
   const img = await loadImage(page.source);
   const canvas = cropSource(img, page.cropData);
   applyFilterToCanvas(canvas, page.filter, page.strength);
@@ -760,12 +839,12 @@ async function preparePage(page) {
 function buildProcList() {
   procList.innerHTML = state.pages.map((p, i) => `
     <li id="proc-row-${i}" class="flex items-center gap-3 rounded-xl border border-brand-100 bg-white/70 px-3 py-2">
-      <img src="${p.source}" class="h-12 w-9 shrink-0 rounded-md border border-brand-100 object-cover" alt="" />
+      <img src="${p.preview || p.source}" class="h-12 w-9 shrink-0 rounded-md border border-brand-100 object-contain" alt="" />
       <div class="min-w-0 flex-1">
-        <p class="text-sm font-extrabold">Halaman ${i + 1}</p>
-        <p id="proc-sub-${i}" class="truncate text-xs font-medium text-ink/50">Menunggu…</p>
+        <p class="text-sm font-extrabold">Page ${i + 1}</p>
+        <p id="proc-sub-${i}" class="truncate text-xs font-medium text-ink/60">Waiting…</p>
       </div>
-      <span id="proc-badge-${i}" class="chip bg-ink/5 text-ink/40"><i class="fa-regular fa-clock"></i></span>
+      <span id="proc-badge-${i}" class="chip bg-ink/5 text-ink/60"><i class="fa-regular fa-clock"></i></span>
     </li>`).join('');
 }
 
@@ -776,21 +855,21 @@ function setRowState(i, st, extraText = '') {
   if (st === 'prep') {
     badge.className = 'chip bg-brand-50 text-brand-600';
     badge.innerHTML = '<i class="fa-solid fa-crop-simple"></i>';
-    sub.textContent = 'Menerapkan crop & filter…';
+    sub.textContent = 'Applying crop and enhancement…';
   } else if (st === 'ocr') {
     badge.className = 'chip bg-brand-100 text-brand-700';
     badge.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i>';
-    sub.textContent = 'OCR berjalan…';
+    sub.textContent = 'Recognizing text…';
   } else if (st === 'done') {
     badge.className = 'chip bg-emerald-100 text-emerald-600';
     badge.innerHTML = '<i class="fa-solid fa-check"></i>';
-    sub.textContent = extraText || 'Selesai';
+    sub.textContent = extraText || 'Done';
   }
 }
 
 function updateRowOcr(i, progress) {
   const sub = $(`#proc-sub-${i}`);
-  if (sub) sub.textContent = `OCR berjalan… ${Math.round((progress || 0) * 100)}%`;
+  if (sub) sub.textContent = `Recognizing text… ${Math.round((progress || 0) * 100)}%`;
 }
 
 function setProgress(frac, text) {
@@ -830,7 +909,7 @@ function addPageContent(doc, page) {
 }
 
 function newPdfForPage(page) {
-  if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('Pustaka jsPDF gagal dimuat.');
+  if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('The PDF library could not load.');
   const { pw, ph } = pageGeometry(page.exportW, page.exportH);
   return new window.jspdf.jsPDF({
     orientation: pw > ph ? 'l' : 'p',
@@ -854,10 +933,10 @@ function showResult() {
   pdfFrame.src = state.pdfURL;
   pdfOpenTab.href = state.pdfURL;
   resultMeta.textContent =
-    `${state.pdfName} · ${formatBytes(state.pdfBlob.size)} · ${state.pages.length} halaman · ${totalWords} kata terindeks`;
+    `${state.pdfName} · ${formatBytes(state.pdfBlob.size)} · ${state.pages.length} pages · ${totalWords} searchable words`;
   btnSplitZip.disabled = false;
   gotoScreen('result');
-  toast('PDF searchable selesai & terunduh otomatis.', 'ok', 4200);
+  toast('Your searchable PDF is ready. Download it below if it did not save automatically.', 'ok', 4200);
 }
 
 /* ---------- Pipeline utama ---------- */
@@ -870,7 +949,7 @@ async function runPipeline() {
   await applyCropToPage(state.cropIndex); // crop halaman terakhir yang diedit
   gotoScreen('process');
   buildProcList();
-  setProgress(0.01, 'Menyiapkan mesin OCR…');
+  setProgress(0.01, 'Preparing text recognition…');
 
   try {
     await ensureWorker();
@@ -880,7 +959,7 @@ async function runPipeline() {
       throwIfCancelled();
       const page = state.pages[i];
       setRowState(i, 'prep');
-      setProgress(0.08 + 0.92 * (i + 0.05) / n, `Menerapkan crop & filter halaman ${i + 1}…`);
+      setProgress(0.08 + 0.92 * (i + 0.05) / n, `Preparing page ${i + 1}…`);
       const prep = await preparePage(page);
       page.exportImage = prep.jpeg;
       page.exportW = prep.w;
@@ -895,13 +974,13 @@ async function runPipeline() {
       state.ocrActiveIndex = -1;
       page.ocrWords = collectWords(data);
       page.ocrText = (data && data.text) || '';
-      setRowState(i, 'done', `${page.ocrWords.length} kata terdeteksi`);
-      setProgress(0.08 + 0.92 * (i + 1) / n, `Halaman ${i + 1} selesai.`);
+      setRowState(i, 'done', `${page.ocrWords.length} words recognized`);
+      setProgress(0.08 + 0.92 * (i + 1) / n, `Page ${i + 1} complete.`);
       await tick(30); // yield ke UI
     }
 
     throwIfCancelled();
-    setProgress(0.985, 'Menyusun PDF searchable & mengompresi gambar…');
+    setProgress(0.985, 'Building your searchable PDF…');
     await tick(60);
 
     // PDF utama: satu dokumen multi-halaman
@@ -915,7 +994,7 @@ async function runPipeline() {
     const baseName = getDocumentBaseName();
     state.pdfName = `${baseName}.pdf`;
     state.pdfBlob = doc.output('blob');
-    setProgress(1, 'Selesai!');
+    setProgress(1, 'Done!');
 
     saveAs(state.pdfBlob, state.pdfName); // AUTO-DOWNLOAD
     cleanupMemory();
@@ -927,10 +1006,10 @@ async function runPipeline() {
       state.worker = null;
     }
     if (cancelled) {
-      toast('Proses dibatalkan.', 'warn');
+      toast('Processing cancelled.', 'warn');
     } else {
       console.error(err);
-      toast(`Gagal memproses: ${err && err.message ? err.message : err}`, 'err', 5000);
+      toast(`Could not process document: ${err && err.message ? err.message : err}`, 'err', 5000);
     }
     gotoScreen(state.pages.length ? 'crop' : 'capture');
   } finally {
@@ -943,10 +1022,10 @@ async function runPipeline() {
 async function buildSplitZip() {
   if (state.processing) return;
   if (!state.pages.length || !state.pages.every((p) => p.exportImage)) {
-    toast('Jalankan "Proses & Export PDF" terlebih dahulu.', 'warn');
+    toast('Create your PDF first.', 'warn');
     return;
   }
-  if (typeof JSZip === 'undefined') { toast('Pustaka JSZip gagal dimuat.', 'err'); return; }
+  if (typeof JSZip === 'undefined') { toast('The ZIP library could not load.', 'err'); return; }
   const original = btnSplitZip.innerHTML;
   btnSplitZip.disabled = true;
   try {
@@ -958,19 +1037,19 @@ async function buildSplitZip() {
       addPageContent(doc, page);
       const name = `${baseName}_${String(i + 1).padStart(2, '0')}.pdf`;
       zip.file(name, doc.output('arraybuffer'));
-      btnSplitZip.innerHTML = `<i class="fa-solid fa-box-archive"></i> Mengemas ${i + 1}/${state.pages.length}…`;
+      btnSplitZip.innerHTML = `<i class="fa-solid fa-box-archive"></i> Packing ${i + 1}/${state.pages.length}…`;
       await tick(0); // yield UI
     }
     const blob = await zip.generateAsync(
       { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } },
-      (meta) => { btnSplitZip.innerHTML = `<i class="fa-solid fa-file-zip fa-beat"></i> Kompresi ${Math.round(meta.percent)}%`; }
+      (meta) => { btnSplitZip.innerHTML = `<i class="fa-solid fa-file-zip fa-beat"></i> Compressing ${Math.round(meta.percent)}%`; }
     );
     const zipName = `${baseName}.zip`;
     saveAs(blob, zipName);
-    toast(`${zipName} terunduh.`, 'ok');
+    toast(`${zipName} downloaded.`, 'ok');
   } catch (e) {
     console.error(e);
-    toast(`Gagal membuat ZIP: ${e && e.message ? e.message : e}`, 'err', 5000);
+    toast(`Could not create ZIP: ${e && e.message ? e.message : e}`, 'err', 5000);
   } finally {
     btnSplitZip.disabled = false;
     btnSplitZip.innerHTML = original;
@@ -980,7 +1059,7 @@ async function buildSplitZip() {
 /* ---------- Reset sesi ---------- */
 function resetAll() {
   if (state.processing) return;
-  if (!window.confirm('Mulai scan baru? Semua halaman saat ini akan dihapus.')) return;
+  if (!window.confirm('Start a new scan? This will remove all current pages. Download your PDF first.')) return;
   destroyCropper();
   state.pages.length = 0;
   state.cropIndex = 0;
@@ -994,13 +1073,18 @@ function resetAll() {
   btnSplitZip.disabled = true;
   syncPageUI();
   gotoScreen('capture');
-  toast('Siap untuk scan baru.', 'ok', 2200);
+  toast('Ready for a new scan.', 'ok', 2200);
 }
 
 /* =========================================================
  * EVENT BINDING & INIT
  * ========================================================= */
 function bindEvents() {
+  // Keep page gestures from zooming the scanning workspace on touch devices.
+  document.addEventListener('gesturestart', (event) => event.preventDefault(), { passive: false });
+  document.addEventListener('touchmove', (event) => {
+    if (event.touches.length > 1) event.preventDefault();
+  }, { passive: false });
   // Kamera
   btnStartCamera.addEventListener('click', () => { state.camError = false; startCamera(); });
   btnShutter.addEventListener('click', capturePhoto);
@@ -1008,6 +1092,9 @@ function bindEvents() {
 
   // Unggah
   fileInput.addEventListener('change', (e) => handleFiles(e.target.files || []));
+  $('#btnUpload').addEventListener('click', () => fileInput.click());
+  $('#btnUploadMore').addEventListener('click', () => fileInput.click());
+  $('#btnUploadAlt').addEventListener('click', () => fileInput.click());
 
   // Navigasi capture → crop
   btnToCrop.addEventListener('click', () => gotoScreen('crop'));
@@ -1063,11 +1150,24 @@ function bindEvents() {
     state.cropDirty = true;
   });
   btnApplyCrop.addEventListener('click', () => applyCropToPage(state.cropIndex, { interactive: true }));
+  btnEditCrop.addEventListener('click', () => {
+    state.pages[state.cropIndex].cropApplied = false;
+    showCropPage(state.cropIndex);
+  });
+  btnAutoCrop.addEventListener('click', async () => {
+    const page = state.pages[state.cropIndex];
+    page.autoCropChecked = false;
+    page.cropData = null;
+    await showCropPage(state.cropIndex);
+  });
   btnResetCrop.addEventListener('click', () => {
-    if (!state.cropper) return;
-    state.cropper.reset();
-    state.pages[state.cropIndex].cropData = null;
-    state.cropDirty = false;
+    const page = state.pages[state.cropIndex];
+    page.cropData = null;
+    page.cropApplied = false;
+    page.autoCropFound = false;
+    page.autoCropChecked = true;
+    page.preview = null;
+    showCropPage(state.cropIndex);
   });
 
   enhanceStrength.addEventListener('input', () => {
@@ -1086,7 +1186,7 @@ function bindEvents() {
 
   // Pipeline & hasil
   btnExport.addEventListener('click', runPipeline);
-  btnCancelProc.addEventListener('click', () => { state.cancelRequested = true; procStatus.textContent = 'Membatalkan…'; });
+  btnCancelProc.addEventListener('click', () => { state.cancelRequested = true; procStatus.textContent = 'Cancelling…'; });
   btnDownloadPdf.addEventListener('click', () => {
     if (state.pdfBlob) saveAs(state.pdfBlob, state.pdfName);
   });
